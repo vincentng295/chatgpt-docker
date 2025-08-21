@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  # Dịch vụ cho ứng dụng Streamlit
+  app:
+    build: .
+    container_name: chatgpt_app
+    ports:
+      - "17011:8501"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      - db
+
+  # Dịch vụ cho cơ sở dữ liệu PostgreSQL
+  db:
+    image: postgres:15
+    container_name: chatgpt_db
+    env_file:
+      - .env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "17012:5432"
+
+  # Dịch vụ Adminer để quản lý CSDL
+  adminer:
+    image: adminer
+    container_name: chatgpt_adminer
+    ports:
+      - "17013:8080"
+    depends_on:
+      - db
+
+volumes:
+  postgres_data:
