@@ -157,19 +157,36 @@ if chat:
 
     # Chat input and processing
     prompt = st.chat_input("Nhập tin nhắn...")
+
+    # Sử dụng session_state để lưu trữ thông tin về uploaded_files
+    if 'uploaded_files' not in st.session_state:
+        st.session_state.uploaded_files = []
+    
     uploaded_files = st.file_uploader("Đính kèm ảnh", type=["png", "jpg", "jpeg", "webp"], accept_multiple_files=True)
+
+    # Cập nhật thông tin upload files vào session_state
+    if uploaded_files:
+        st.session_state.uploaded_files = uploaded_files  # Lưu trữ file uploaded
+    else:
+        st.session_state.uploaded_files = []  # Reset nếu không có files
 
     if prompt:
         user_message_content = []
+
         if prompt:
             user_message_content.append({"type": "text", "text": prompt})
-        
-        for uploaded_file in uploaded_files:
-            data_url = image_to_data_url(uploaded_file)
-            user_message_content.append({"type": "image_url", "image_url": {"url": data_url}})
+
+        # Nếu có files uploaded, thêm vào messages
+        if st.session_state.uploaded_files:
+            for uploaded_file in st.session_state.uploaded_files:
+                data_url = image_to_data_url(uploaded_file)
+                user_message_content.append({"type": "image_url", "image_url": {"url": data_url}})
+
+            # Xóa trạng thái upload ảnh sau khi đã xử lý
+            st.session_state.uploaded_files = []  # Reset trạng thái upload
 
         chat["messages"].append({"role": "user", "content": user_message_content})
-        
+
         if client:
             with st.chat_message("assistant", avatar="🤖"):
                 with st.spinner("Đang suy nghĩ..."):
@@ -182,7 +199,7 @@ if chat:
                         )
                         response = st.write_stream(stream)
                         chat["messages"].append({"role": "assistant", "content": response})
-                        
+
                         # Cập nhật title nếu là tin nhắn thứ 2 (user -> assistant)
                         if len(chat["messages"]) == 3:
                             try:
@@ -195,7 +212,7 @@ if chat:
                                 new_title = title_response.choices[0].message.content.strip().strip('"')
                                 chat["title"] = new_title
                             except Exception:
-                                chat["title"] = prompt[:30] # Fallback
+                                chat["title"] = prompt[:30]  # Fallback
 
                         # Lưu lại toàn bộ cuộc trò chuyện vào CSDL
                         db.save_chat(chat["id"], chat["title"], chat["messages"])
