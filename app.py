@@ -139,21 +139,43 @@ if chat:
 
     # Show messages
     for msg in chat["messages"]:
-        if msg["role"] == "system": continue
+        if msg["role"] == "system": 
+            continue
+
         avatar = "🧑‍💻" if msg["role"] == "user" else "🤖"
         with st.chat_message(msg["role"], avatar=avatar):
-            # Xử lý content đa dạng (text, list of parts)
             content = msg.get("content")
             if isinstance(content, list):
                 for part in content:
                     if isinstance(part, dict):
                         if part.get("type") == "text":
-                            st.markdown(part["text"])
+                            if msg["role"] == "user":
+                                text = part["text"]
+                                lines = text.split('\n')
+
+                                if len(lines) > 3:
+                                    # Hiển thị 3 dòng đầu và "Xem thêm"
+                                    st.text("\n".join(lines[:3]) + "...")  # Hiển thị 3 dòng đầu
+                                    with st.expander("Xem thêm", expanded=False):
+                                        st.text(text)  # Hiển thị toàn bộ
+                                else:
+                                    st.text(text)  # Hiển thị nội dung bình thường
+                            else:
+                                st.markdown(part["text"])  # AI vẫn parse markdown
                         elif part.get("type") == "image_url":
                             st.image(part["image_url"]["url"], caption="Ảnh đã gửi")
             elif isinstance(content, str):
-                st.markdown(content)
-
+                if msg["role"] == "user":
+                    lines = content.split('\n')
+                    if len(lines) > 3:
+                        # Hiển thị 3 dòng đầu và "Xem thêm"
+                        st.text("\n".join(lines[:3]) + "...")  # Hiển thị 3 dòng đầu
+                        with st.expander("Xem thêm", expanded=False):
+                            st.text(content)  # Hiển thị toàn bộ
+                    else:
+                        st.text(content)  # Hiển thị nội dung bình thường
+                else:
+                    st.markdown(content)  # assistant -> markdown
 
     # Chat input and processing
     prompt = st.chat_input("Nhập tin nhắn...")
