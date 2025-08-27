@@ -51,14 +51,15 @@ def init_state():
         st.session_state.settings = {
             "model": "gpt-4o-mini",
             "max_output_tokens": 1024,
+            "render_mode" : "Markdown",
             "system_prompt": "Bạn là Huệ — một trợ lý hữu ích, nói tiếng Việt, súc tích và thân thiện.",
         }
 
 def new_chat():
     chat_id = str(int(time.time() * 1000))
-    title = f"Cuộc trò chuyện mới"
+    title = "Cuộc trò chuyện mới"
     messages = [{"role": "system", "content": st.session_state.settings["system_prompt"]}]
-    db.save_chat(chat_id, title, messages)
+    db.save_chat(chat_id, title, messages, st.session_state.settings)
     st.session_state.current_chat_id = chat_id
     st.rerun()
 
@@ -120,12 +121,15 @@ with st.sidebar:
 
     with st.expander("🎛️ System prompt"):
         st.session_state.settings["system_prompt"] = st.text_area("Nội dung", value=st.session_state.settings["system_prompt"], height=120)
-        if st.button("Áp dụng cho chat hiện tại"):
-            chat = get_current_chat()
-            if chat and chat["messages"]:
-                chat["messages"][0]["content"] = st.session_state.settings["system_prompt"]
-                db.save_chat(chat["id"], chat["title"], chat["messages"])
-                st.success("Đã cập nhật system prompt.")
+
+    # Thêm nút lưu thiết lập
+    if st.button("💾 Lưu thiết lập"):
+        chat = get_current_chat()
+        if chat:
+            db.save_chat(chat["id"], chat["title"], chat["messages"], st.session_state.settings)
+            st.success("Đã lưu thiết lập thành công ✅")
+        else:
+            st.warning("Chưa có cuộc trò chuyện nào để lưu.")
 
     st.divider()
     st.subheader("💬 Lịch sử trò chuyện")
@@ -160,6 +164,8 @@ if not st.session_state.current_chat_id:
 chat = get_current_chat()
 
 if chat:
+    if chat.get("settings"):
+        st.session_state.settings.update(chat["settings"])
     st.title(chat["title"])
 
     # Show messages
@@ -287,7 +293,7 @@ if chat:
                                 chat["title"] = prompt[:30]  # Fallback
 
                         # Lưu lại toàn bộ cuộc trò chuyện vào CSDL
-                        db.save_chat(chat["id"], chat["title"], chat["messages"])
+                        db.save_chat(chat["id"], chat["title"], chat["messages"], st.session_state.settings)
                         st.rerun()
 
                     except Exception as e:

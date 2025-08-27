@@ -25,6 +25,10 @@ def init_db():
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
             """)
+            # Thêm cột settings nếu chưa có
+            cur.execute("""
+                ALTER TABLE conversations ADD COLUMN IF NOT EXISTS settings JSONB;
+            """)
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -51,28 +55,35 @@ def get_chat_by_id(chat_id):
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, title, messages FROM conversations WHERE id = %s;", (chat_id,))
+            cur.execute("SELECT id, title, messages, settings FROM conversations WHERE id = %s;", (chat_id,))
             chat = cur.fetchone()
             if chat:
-                return {"id": chat[0], "title": chat[1], "messages": chat[2]}
+                return {
+                    "id": chat[0],
+                    "title": chat[1],
+                    "messages": chat[2],
+                    "settings": chat[3] or {}
+                }
             return None
     except Exception as e:
         st.error(f"Lỗi khi lấy chi tiết chat: {e}")
         return None
+        return None
 
-def save_chat(chat_id, title, messages):
+def save_chat(chat_id, title, messages, settings=None):
     """Lưu hoặc cập nhật một cuộc trò chuyện."""
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
             # Dùng ON CONFLICT để vừa INSERT (tạo mới) vừa UPDATE (cập nhật)
             cur.execute("""
-                INSERT INTO conversations (id, title, messages)
-                VALUES (%s, %s, %s)
+                INSERT INTO conversations (id, title, messages, settings)
+                VALUES (%s, %s, %s, %s)
                 ON CONFLICT (id) DO UPDATE SET
                     title = EXCLUDED.title,
-                    messages = EXCLUDED.messages;
-            """, (chat_id, title, json.dumps(messages)))
+                    messages = EXCLUDED.messages,
+                    settings = EXCLUDED.settings;
+            """, (chat_id, title, json.dumps(messages), json.dumps(settings or {})))
         conn.commit()
     except Exception as e:
         conn.rollback()
