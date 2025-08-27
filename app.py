@@ -44,9 +44,7 @@ def init_state():
         # Lấy API key từ biến môi trường của Docker
         st.session_state.api_key = os.getenv("OPENAI_API_KEY", "")
     if "current_chat_id" not in st.session_state:
-        # Chọn cuộc trò chuyện đầu tiên trong danh sách (nếu có)
-        all_chats = db.get_all_chats()
-        st.session_state.current_chat_id = all_chats[0]['id'] if all_chats else None
+        st.session_state.current_chat_id = None
     if "settings" not in st.session_state:
         st.session_state.settings = {
             "model": "gpt-4o-mini",
@@ -156,9 +154,7 @@ with st.sidebar:
 # -----------------------------
 if not st.session_state.current_chat_id:
     all_chats = db.get_all_chats()
-    if all_chats:
-        st.session_state.current_chat_id = all_chats[0]['id']
-    else:
+    if not all_chats:
         new_chat()
 
 chat = get_current_chat()
