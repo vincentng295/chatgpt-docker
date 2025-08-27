@@ -91,7 +91,14 @@ with st.sidebar:
         st.error("Chưa có API key hợp lệ. Hãy thiết lập trong file .env và khởi động lại Docker.")
 
     st.session_state.settings["model"] = st.selectbox("Model", ["gpt-4o-mini", "gpt-4o"], index=0)
-    st.session_state.settings["max_output_tokens"] = st.slider("Giới hạn token trả lời", 64, 8192, 1024)
+    st.session_state.settings["max_output_tokens"] = st.slider("Giới hạn token trả lời", 64, 8192, 8192)
+
+    # 🔀 Thêm tùy chọn hiển thị output
+    st.session_state.settings["render_mode"] = st.radio(
+        "Hiển thị câu trả lời AI dưới dạng:",
+        ["Markdown", "Text only"],
+        index=0
+    )
 
     with st.expander("🎛️ System prompt"):
         st.session_state.settings["system_prompt"] = st.text_area("Nội dung", value=st.session_state.settings["system_prompt"], height=120)
@@ -161,7 +168,11 @@ if chat:
                                 else:
                                     st.text(text)  # Hiển thị nội dung bình thường
                             else:
-                                st.markdown(part["text"])  # AI vẫn parse markdown
+                                if st.session_state.settings.get("render_mode") == "Text only":
+                                    st.text(part["text"])
+                                else:
+                                    st.markdown(part["text"])
+
                         elif part.get("type") == "image_url":
                             st.image(part["image_url"]["url"], caption="Ảnh đã gửi")
             elif isinstance(content, str):
@@ -175,7 +186,11 @@ if chat:
                     else:
                         st.text(content)  # Hiển thị nội dung bình thường
                 else:
-                    st.markdown(content)  # assistant -> markdown
+                    if st.session_state.settings.get("render_mode") == "Text only":
+                        st.text(content)   # hiển thị dạng raw text
+                    else:
+                        st.markdown(content)  # hiển thị dạng markdown
+
 
     # Chat input and processing
     prompt = st.chat_input("Nhập tin nhắn...")
