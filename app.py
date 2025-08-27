@@ -246,14 +246,31 @@ if chat:
             with st.chat_message("assistant", avatar="🤖"):
                 with st.spinner("Đang suy nghĩ..."):
                     try:
-                        stream = client.chat.completions.create(
-                            model=st.session_state.settings["model"],
-                            messages=[m for m in chat["messages"] if m["role"] != "system"],
-                            stream=True,
-                            max_completion_tokens=st.session_state.settings["max_output_tokens"],
-                        )
-                        response = st.write_stream(stream)
-                        chat["messages"].append({"role": "assistant", "content": response})
+                        if st.session_state.settings["model"].startswith("dall-e-"):
+                            # Gọi image API
+                            image = client.images.generate(
+                                model=st.session_state.settings["model"],
+                                prompt=prompt,
+                                size="1024x1024"
+                            )
+                            img_url = image.data[0].url
+                            with st.chat_message("assistant", avatar="🤖"):
+                                st.image(img_url, caption=f'Ảnh AI ({st.session_state.settings["model"]})')
+                            chat["messages"].append({
+                                "role": "assistant",
+                                "content": [{"type": "image_url", "image_url": {"url": img_url}}]
+                            })
+                            db.save_chat(chat["id"], chat["title"], chat["messages"])
+                            st.rerun()
+                        else:
+                            stream = client.chat.completions.create(
+                                model=st.session_state.settings["model"],
+                                messages=[m for m in chat["messages"] if m["role"] != "system"],
+                                stream=True,
+                                max_completion_tokens=st.session_state.settings["max_output_tokens"],
+                            )
+                            response = st.write_stream(stream)
+                            chat["messages"].append({"role": "assistant", "content": response})
 
                         # Cập nhật title nếu là tin nhắn thứ 2 (user -> assistant)
                         if len(chat["messages"]) == 3:
