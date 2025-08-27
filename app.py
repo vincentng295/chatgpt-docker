@@ -90,7 +90,25 @@ with st.sidebar:
     if client is None:
         st.error("Chưa có API key hợp lệ. Hãy thiết lập trong file .env và khởi động lại Docker.")
 
-    st.session_state.settings["model"] = st.selectbox("Model", ["gpt-4o-mini", "gpt-4o"], index=0)
+    try:
+        # 🔄 Lấy danh sách model từ OpenAI
+        models = client.models.list()
+        available_models = sorted([m.id for m in models.data])
+    except Exception as e:
+        st.error(f"Không lấy được danh sách model: {e}")
+        available_models = []
+
+    # Nếu không có model nào thì fallback
+    if not available_models:
+        available_models = ["gpt-4o-mini"]
+
+    # Hiển thị dropdown chọn model
+    current_model = st.session_state.settings.get("model", available_models[0])
+    st.session_state.settings["model"] = st.selectbox(
+        "Model",
+        available_models,
+        index=available_models.index(current_model) if current_model in available_models else 0
+    )
     st.session_state.settings["max_output_tokens"] = st.slider("Giới hạn token trả lời", 64, 8192, 8192)
 
     # 🔀 Thêm tùy chọn hiển thị output
@@ -232,7 +250,7 @@ if chat:
                             model=st.session_state.settings["model"],
                             messages=[m for m in chat["messages"] if m["role"] != "system"],
                             stream=True,
-                            max_tokens=st.session_state.settings["max_output_tokens"],
+                            max_completion_tokens=st.session_state.settings["max_output_tokens"],
                         )
                         response = st.write_stream(stream)
                         chat["messages"].append({"role": "assistant", "content": response})
