@@ -3,6 +3,7 @@ import json
 import base64
 import time
 from typing import List, Dict, Any
+import gittojson
 
 import streamlit as st
 from openai import OpenAI
@@ -168,7 +169,7 @@ if chat:
     st.title(chat["title"])
 
     # Show messages
-    for msg in chat["messages"]:
+    for i, msg in enumerate(chat["messages"]):
         if msg["role"] == "system": 
             continue
 
@@ -176,7 +177,7 @@ if chat:
         with st.chat_message(msg["role"], avatar=avatar):
             content = msg.get("content")
             if isinstance(content, list):
-                for part in content:
+                for j, part in enumerate(content):
                     if isinstance(part, dict):
                         if part.get("type") == "text":
                             if msg["role"] == "user":
@@ -198,6 +199,17 @@ if chat:
 
                         elif part.get("type") == "image_url":
                             st.image(part["image_url"]["url"], caption="Ảnh đã gửi")
+
+                        elif part.get("type") == "repojson":
+                            st.write(f"Github repo: {part.get('url')}")
+                            st.download_button(
+                                "📥 repo.json",
+                                data=part.get("text").encode("utf-8"),
+                                file_name="repo.json",
+                                mime="application/json",
+                                key=f"repojson_{i}_{j}"
+                            )
+
             elif isinstance(content, str):
                 if msg["role"] == "user":
                     lines = content.split('\n')
@@ -226,15 +238,58 @@ if chat:
 
     # Cập nhật thông tin upload files vào session_state
     if uploaded_files:
-        st.session_state.uploaded_files = uploaded_files  # Lưu trữ file uploaded
+        st.session_state.uploaded_files = uploaded_files
     else:
-        st.session_state.uploaded_files = []  # Reset nếu không có files
+        st.session_state.uploaded_files = []
+
+    st.markdown("**Hoặc kết nối GitHub repo:**")
+
+    if "github_url" not in st.session_state:
+        st.session_state.github_url = ""
+
+    col1, col2 = st.columns([0.85, 0.15])
+    with col1:
+        github_url_input = st.text_input(
+            "URL GitHub repo",
+            value=st.session_state.github_url,
+            placeholder="https://github.com/owner/repo",
+            label_visibility="collapsed"
+        )
+    with col2:
+        if st.button("❌", help="Xóa URL GitHub"):
+            st.session_state.github_url = ""
+            st.rerun()
+
+    # Khi user nhập repo mới
+    if github_url_input and github_url_input != st.session_state.github_url:
+        st.session_state.github_url = github_url_input
+        try:
+            with st.spinner("⏳ Đang tải repo..."):
+                repo_json_file = gittojson.repo_to_json(st.session_state.github_url)
+                repo_json = json.load(repo_json_file)
+                repo_json_str = json.dumps(repo_json, ensure_ascii=False)
+
+                chat["messages"].append({
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "repojson",
+                            "url": st.session_state.github_url,
+                            "text": repo_json_str
+                        }
+                    ]
+                })
+                db.save_chat(chat["id"], chat["title"], chat["messages"], st.session_state.settings)
+                st.success("✅ Repo đã được thêm vào cuộc trò chuyện")
+                st.rerun()
+        except Exception as e:
+            st.error(f"Lỗi tải repo: {e}")
+
 
     if prompt:
         user_message_content = []
 
-        if prompt:
-            user_message_content.append({"type": "text", "text": prompt})
+        user_message_content.append({"type": "text", "text": prompt})
 
         # Nếu có files uploaded, thêm vào messages
         if st.session_state.uploaded_files:
@@ -242,15 +297,61 @@ if chat:
                 data_url = image_to_data_url(uploaded_file)
                 user_message_content.append({"type": "image_url", "image_url": {"url": data_url}})
 
-            # Xóa trạng thái upload ảnh sau khi đã xử lý
-            st.session_state.uploaded_files = []  # Reset trạng thái upload
+        # Nếu có GitHub repo, thêm vào messages
+        if st.session_state.github_url:
+            try:
+                repo_json_file = gittojson.repo_to_json(st.session_state.github_url)
+                repo_json = json.load(repo_json_file)
+                repo_json_str = json.dumps(repo_json, ensure_ascii=False)
 
+                chat["messages"].append({
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "repojson",
+                            "url": st.session_state.github_url,
+                            "text": repo_json_str
+                        }
+                    ]
+                })
+            except Exception as e:
+                st.error(f"Lỗi tải repo: {e}")
+
+        # Append message của user
         chat["messages"].append({"role": "user", "content": user_message_content})
+
+        # Reset trạng thái sau khi gửi prompt
+        st.session_state.uploaded_files = []
+        st.session_state.github_url = ""
 
         if client:
             with st.chat_message("assistant", avatar="🤖"):
                 with st.spinner("Đang suy nghĩ..."):
                     try:
+                        # Chuẩn bị messages, loại bỏ các phần không cần thiết
+                        messages_for_api = []
+                        for msg in chat["messages"]:
+                            safe_content = []
+
+                            # Nếu content là list (đa phần user input sau này)
+                            if isinstance(msg["content"], list):
+                                for c in msg["content"]:
+                                    if isinstance(c, dict):
+                                        if c.get("type") in ("text", "image_url"):
+                                            safe_content.append(c)
+                                        elif c.get("type") == "repojson":
+                                            safe_content.append({
+                                                "type": "text",
+                                                "text": f"Repo JSON import từ {c['url']}:\n{c['text']}"
+                                            })
+
+                            # Nếu content là string (system prompt, assistant text thuần, fallback cũ)
+                            elif isinstance(msg["content"], str):
+                                safe_content.append({"type": "text", "text": msg["content"]})
+
+                            if safe_content:
+                                messages_for_api.append({"role": msg["role"], "content": safe_content})
+
                         if st.session_state.settings["model"].startswith("dall-e-"):
                             # Gọi image API
                             image = client.images.generate(
@@ -270,7 +371,7 @@ if chat:
                         else:
                             stream = client.chat.completions.create(
                                 model=st.session_state.settings["model"],
-                                messages=[m for m in chat["messages"] if m["role"] != "system"],
+                                messages=messages_for_api,
                                 stream=True,
                                 max_completion_tokens=st.session_state.settings["max_output_tokens"],
                             )
