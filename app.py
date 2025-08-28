@@ -52,6 +52,8 @@ def init_state():
             "render_mode" : "Markdown",
             "system_prompt": "Bạn là Huệ — một trợ lý hữu ích, nói tiếng Việt, súc tích và thân thiện.",
         }
+    if "models_list" not in st.session_state:
+        st.session_state.models_list = []
 
 def new_chat():
     chat_id = str(int(time.time() * 1000))
@@ -89,24 +91,25 @@ with st.sidebar:
     if client is None:
         st.error("Chưa có API key hợp lệ. Hãy thiết lập trong file .env và khởi động lại Docker.")
 
-    try:
-        # 🔄 Lấy danh sách model từ OpenAI
-        models = client.models.list()
-        available_models = sorted([m.id for m in models.data])
-    except Exception as e:
-        st.error(f"Không lấy được danh sách model: {e}")
-        available_models = []
+    if not st.session_state.models_list:
+        try:
+            # 🔄 Lấy danh sách model từ OpenAI
+            models = client.models.list()
+            st.session_state.models_list = sorted([m.id for m in models.data])
+        except Exception as e:
+            st.error(f"Không lấy được danh sách model: {e}")
+            st.session_state.models_list = []
 
     # Nếu không có model nào thì fallback
-    if not available_models:
-        available_models = ["gpt-4o-mini"]
+    if not st.session_state.models_list:
+        st.session_state.models_list = ["gpt-4o-mini"]
 
     # Hiển thị dropdown chọn model
-    current_model = st.session_state.settings.get("model", available_models[0])
+    current_model = st.session_state.settings.get("model", st.session_state.models_list[0])
     st.session_state.settings["model"] = st.selectbox(
         "Model",
-        available_models,
-        index=available_models.index(current_model) if current_model in available_models else 0
+        st.session_state.models_list,
+        index=st.session_state.models_list.index(current_model) if current_model in st.session_state.models_list else 0
     )
     st.session_state.settings["max_output_tokens"] = st.slider("Giới hạn token trả lời", 64, 8192, 8192)
 
