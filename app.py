@@ -338,7 +338,15 @@ if chat:
                                 for c in msg["content"]:
                                     if isinstance(c, dict):
                                         if c.get("type") in ("text", "image_url"):
-                                            safe_content.append(c)
+                                            if c.get("type") == "image_url" and msg["role"] == "assistant":
+                                                # Nếu role là model mà content chứa hình ảnh, chuyển thành user message
+                                                # và thêm tiền tố "Ảnh model đã gửi:"
+                                                messages_for_api.append({
+                                                    "role": "user",
+                                                    "content": [{"type": "text", "text": "Ảnh model đã gửi:"}, c]
+                                                })
+                                            else:
+                                                safe_content.append(c)
                                         elif c.get("type") == "repojson":
                                             safe_content.append({
                                                 "type": "text",
@@ -352,7 +360,7 @@ if chat:
                             if safe_content:
                                 messages_for_api.append({"role": msg["role"], "content": safe_content})
 
-                        if st.session_state.settings["model"].startswith("dall-e-"):
+                        if st.session_state.settings["model"].startswith("dall-e-") or st.session_state.settings["model"].startswith("gpt-image-"):
                             # Gọi image API
                             image = client.images.generate(
                                 model=st.session_state.settings["model"],
