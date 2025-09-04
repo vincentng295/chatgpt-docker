@@ -55,6 +55,90 @@ def init_state():
         }
     if "models_list" not in st.session_state:
         st.session_state.models_list = []
+    # 👇 State cho chế độ chỉnh sửa
+    if "editing_index" not in st.session_state:
+        st.session_state.editing_index = None
+    if "edit_text" not in st.session_state:
+        st.session_state.edit_text = ""
+    if "edit_github_url" not in st.session_state:
+        st.session_state.edit_github_url = ""
+    if "edit_image_urls" not in st.session_state:
+        st.session_state.edit_image_urls = []
+
+def decompose_user_content(content):
+    """Tách nội dung user thành (text, [image_urls], repo_url)."""
+    texts, image_urls, repo_url = [], [], None
+    if isinstance(content, list):
+        for c in content:
+            if isinstance(c, dict):
+                if c.get("type") == "text":
+                    texts.append(c.get("text", ""))
+                elif c.get("type") == "image_url":
+                    url = c.get("image_url", {}).get("url")
+                    if url:
+                        image_urls.append(url)
+                elif c.get("type") == "repojson":
+                    repo_url = c.get("url")
+    elif isinstance(content, str):
+        texts.append(content)
+    return "\n".join([t for t in texts if t is not None]), image_urls, repo_url
+
+def build_user_content(text, new_image_files, keep_old_image_urls, github_url):
+    """Gom nội dung user thành schema messages của OpenAI."""
+    content = []
+    if text and text.strip():
+        content.append({"type": "text", "text": text})
+
+    # Giữ ảnh cũ (nếu có)
+    for old_url in keep_old_image_urls or []:
+        content.append({"type": "image_url", "image_url": {"url": old_url}})
+
+    # Thêm ảnh mới (nếu có)
+    for f in (new_image_files or []):
+        content.append({"type": "image_url", "image_url": {"url": image_to_data_url(f)}})
+
+    # Thêm repo (nếu có)
+    if github_url:
+        repo_json_file = gittojson.repo_to_json(github_url)
+        repo_json = json.load(repo_json_file)
+        repo_json_str = json.dumps(repo_json, ensure_ascii=False)
+        content.append({
+            "type": "repojson",
+            "url": github_url,
+            "text": repo_json_str
+        })
+    return content
+
+def prepare_messages_for_api(messages):
+    """Chuyển đổi toàn bộ chat['messages'] sang dạng an toàn để gửi API."""
+    messages_for_api = []
+    for msg in messages:
+        safe_content = []
+
+        if isinstance(msg["content"], list):
+            for c in msg["content"]:
+                if isinstance(c, dict):
+                    if c.get("type") in ("text", "image_url"):
+                        if c.get("type") == "image_url" and msg["role"] == "assistant":
+                            # Ảnh của model -> chuyển thành user thông báo
+                            messages_for_api.append({
+                                "role": "user",
+                                "content": [{"type": "text", "text": "Ảnh model đã gửi:"}, c]
+                            })
+                        else:
+                            safe_content.append(c)
+                    elif c.get("type") == "repojson":
+                        safe_content.append({
+                            "type": "text",
+                            "text": f"Repo JSON import từ {c['url']}:\n{c['text']}"
+                        })
+        elif isinstance(msg["content"], str):
+            safe_content.append({"type": "text", "text": msg["content"]})
+
+        if safe_content:
+            messages_for_api.append({"role": msg["role"], "content": safe_content})
+
+    return messages_for_api
 
 def new_chat():
     chat_id = str(int(time.time() * 1000))
@@ -226,6 +310,130 @@ if chat:
                     else:
                         st.markdown(content)  # hiển thị dạng markdown
 
+        if msg["role"] == "user":
+            # Hàng nút thao tác
+            # Nút 3 chấm (menu)
+            with st.expander("⋮", expanded=False):
+                if st.button("✏️ Sửa", key=f"edit_btn_{i}"):
+                    st.session_state.editing_index = i
+                    text0, img_urls0, repo0 = decompose_user_content(msg["content"])
+                    st.session_state.edit_text = text0 or ""
+                    st.session_state.edit_github_url = repo0 or ""
+                    st.session_state.edit_image_urls = img_urls0 or []
+                    st.rerun()
+
+                if st.button("🗑️ Xóa từ đây", key=f"del_from_btn_{i}"):
+                    chat["messages"] = chat["messages"][:i]
+                    db.save_chat(chat["id"], chat["title"], chat["messages"], st.session_state.settings)
+                    st.success("Đã xóa. Cuộc trò chuyện được bắt đầu lại từ mốc này.")
+                    st.rerun()
+
+            # Nếu đang chỉnh sửa đúng message này -> hiển thị form
+            if st.session_state.editing_index == i:
+                st.info("Đang chỉnh sửa tin nhắn này. Lưu để khởi động lại cuộc trò chuyện từ đây.")
+                new_text = st.text_area(
+                    "Nội dung văn bản",
+                    value=st.session_state.edit_text,
+                    height=180,
+                    key=f"edit_text_{i}"
+                )
+
+                keep_old = st.checkbox(
+                    "Giữ các ảnh đã gửi trước đó",
+                    value=True,
+                    key=f"keep_old_{i}"
+                )
+
+                new_images = st.file_uploader(
+                    "Thêm ảnh mới (tuỳ chọn)",
+                    type=["png", "jpg", "jpeg", "webp"],
+                    accept_multiple_files=True,
+                    key=f"edit_upload_{i}"
+                )
+
+                new_github = st.text_input(
+                    "GitHub repo (tuỳ chọn, để trống nếu muốn bỏ)",
+                    value=st.session_state.edit_github_url,
+                    key=f"edit_github_{i}"
+                )
+
+                col_save, col_cancel = st.columns(2)
+                with col_save:
+                    if st.button("💾 Lưu & Restart", key=f"save_edit_{i}"):
+                        try:
+                            # Xây content mới
+                            content_new = build_user_content(
+                                text=new_text,
+                                new_image_files=new_images,
+                                keep_old_image_urls=(st.session_state.edit_image_urls if keep_old else []),
+                                github_url=new_github.strip(),
+                            )
+
+                            # Cập nhật message i
+                            chat["messages"][i]["content"] = content_new
+
+                            # Cắt bỏ mọi message sau i (restart từ đây)
+                            chat["messages"] = chat["messages"][:i+1]
+
+                            # Gọi lại AI để trả lời từ lịch sử đã cắt
+                            if client:
+                                with st.chat_message("assistant", avatar="🤖"):
+                                    with st.spinner("Đang tạo phản hồi mới..."):
+                                        msgs_api = prepare_messages_for_api(chat["messages"])
+
+                                        # Ảnh: vẫn hỗ trợ image model nếu bạn chọn
+                                        if st.session_state.settings["model"].startswith(("dall-e-", "gpt-image-")):
+                                            image = client.images.generate(
+                                                model=st.session_state.settings["model"],
+                                                prompt=new_text or "Hãy tạo một hình ảnh minh hoạ.",
+                                                size="1024x1024"
+                                            )
+                                            img_url = image.data[0].url
+                                            st.image(img_url, caption=f'Ảnh AI ({st.session_state.settings["model"]})')
+                                            chat["messages"].append({
+                                                "role": "assistant",
+                                                "content": [{"type": "image_url", "image_url": {"url": img_url}}]
+                                            })
+                                        else:
+                                            stream = client.chat.completions.create(
+                                                model=st.session_state.settings["model"],
+                                                messages=msgs_api,
+                                                stream=True,
+                                                max_completion_tokens=st.session_state.settings["max_output_tokens"],
+                                            )
+                                            response = st.write_stream(stream)
+                                            chat["messages"].append({"role": "assistant", "content": response})
+
+                                # Cập nhật title nếu đây là lượt tương tác đầu tiên
+                                if len(chat["messages"]) == 3:
+                                    try:
+                                        title_prompt = f"Tóm tắt cuộc trò chuyện sau thành một tiêu đề ngắn gọn (dưới 5 từ) bằng tiếng Việt: User: {(new_text or '')[:50]}... Assistant: {str(chat['messages'][-1].get('content',''))[:50]}..."
+                                        title_response = client.chat.completions.create(
+                                            model="gpt-4o-mini",
+                                            messages=[{"role": "user", "content": title_prompt}],
+                                            temperature=0.2,
+                                        )
+                                        new_title = title_response.choices[0].message.content.strip().strip('"')
+                                        chat["title"] = new_title or chat["title"]
+                                    except Exception:
+                                        pass
+
+                            # Lưu và thoát chế độ chỉnh sửa
+                            db.save_chat(chat["id"], chat["title"], chat["messages"], st.session_state.settings)
+                            st.session_state.editing_index = None
+                            st.session_state.edit_text = ""
+                            st.session_state.edit_github_url = ""
+                            st.session_state.edit_image_urls = []
+                            st.success("Đã lưu chỉnh sửa và khởi động lại từ mốc này.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Lỗi khi lưu chỉnh sửa: {e}")
+
+                with col_cancel:
+                    if st.button("Hủy", key=f"cancel_edit_{i}"):
+                        st.session_state.editing_index = None
+                        st.rerun()
+
 
     # Chat input and processing
     prompt = st.chat_input("Nhập tin nhắn...")
@@ -329,36 +537,7 @@ if chat:
                 with st.spinner("Đang suy nghĩ..."):
                     try:
                         # Chuẩn bị messages, loại bỏ các phần không cần thiết
-                        messages_for_api = []
-                        for msg in chat["messages"]:
-                            safe_content = []
-
-                            # Nếu content là list (đa phần user input sau này)
-                            if isinstance(msg["content"], list):
-                                for c in msg["content"]:
-                                    if isinstance(c, dict):
-                                        if c.get("type") in ("text", "image_url"):
-                                            if c.get("type") == "image_url" and msg["role"] == "assistant":
-                                                # Nếu role là model mà content chứa hình ảnh, chuyển thành user message
-                                                # và thêm tiền tố "Ảnh model đã gửi:"
-                                                messages_for_api.append({
-                                                    "role": "user",
-                                                    "content": [{"type": "text", "text": "Ảnh model đã gửi:"}, c]
-                                                })
-                                            else:
-                                                safe_content.append(c)
-                                        elif c.get("type") == "repojson":
-                                            safe_content.append({
-                                                "type": "text",
-                                                "text": f"Repo JSON import từ {c['url']}:\n{c['text']}"
-                                            })
-
-                            # Nếu content là string (system prompt, assistant text thuần, fallback cũ)
-                            elif isinstance(msg["content"], str):
-                                safe_content.append({"type": "text", "text": msg["content"]})
-
-                            if safe_content:
-                                messages_for_api.append({"role": msg["role"], "content": safe_content})
+                        messages_for_api = prepare_messages_for_api(chat["messages"])
 
                         if st.session_state.settings["model"].startswith("dall-e-") or st.session_state.settings["model"].startswith("gpt-image-"):
                             # Gọi image API
